@@ -216,8 +216,8 @@ h6 {
 
 .navmenu a:hover,
 .navmenu li:hover>a {
-  max-width: 100%;
   color: var(--contrast-color);
+  background: var(--nav-hover-color);
 }
 
 .navmenu a:hover span,
