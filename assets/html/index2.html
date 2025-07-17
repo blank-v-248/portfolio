@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <script src="./d3.min.js"></script>
+  <title>Dashboard</title>
+  <style>
+    /* CSS to control layout: creating three bars: left, center, right */
+    #leftContainer {
+      float: left;
+      margin-right: 20px;
+    }
+
+    #centerContainer {
+      float: left;
+    }
+
+    #right-container {
+      float: left;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Setting up containers and texts: --->
+
+  <!--I. Line chart area --->
+  <div id="leftContainer">
+    <p style="text-align: center; font-size: 14px; font-family: Bahnschrift;">
+      Trends in the number of new reported<br>
+      cases and total vaccinations
+    </p>
+    <svg id="lch_cont1"></svg> <br>
+    <svg id="lch_cont2"></svg>
+    <p style="text-align: center; font-size: 14px; font-family: Bahnschrift; margin-top: -10px;">
+      The number of total people <select name="vacc_meas" id="vacc_meas" style="font-family: Bahnschrift;">
+      <option value="people_fully_vaccinated_per_hundred">fully vaccinated</option>
+      <option value="people_vaccinated_per_hundred">vaccinated</option>
+    </select><br>
+      VS the number of total deaths
+    </p>
+    <svg id="big_scplot"></svg> <br>
+  </div>
+
+    <!-- II. Center area -->
+  <div id="centerContainer" style="font-family: Bahnschrift;">
+    <!-- main title-->
+    <p style="text-align: center; font-size: 28px; font-family: Bahnschrift; font-weight: bold; margin-top: 0px;">The Covid-19 Dataset</p>
+    <!-- II.1 Interaction slider + dropdown menu -->
+    <label for="meas" style="margin-top: -40px;">Choose a measure:</label>
+    <select name="meas" id="meas" style="font-family: Bahnschrift;">
+      <option value="total_deaths_per_million">Total deaths per million</option>
+      <option value="total_cases_per_million">Total cases per million</option>
+    </select>
+    <br><br>
+
+    <input type="range" min="0" max="30" value="5" id="timeSlider" style="width: 600px" step="1">
+    <div id="slideTextContainer" style="display: flex; align-items: center">
+      <p style="font-family: Bahnschrift; margin-top: 0px;">Choosen date:</p>
+      <div id="selection" style="margin-left: 10px; margin-top: -15px; font-family: Bahnschrift;"></div>
+    </div>
+
+    <!-- II.2. Map -->
+    <svg id="mapcontainer" width="700" height="500"></svg>
+
+    <!--II.3. Text info -->
+    <div id="addInfo" style="display: flex; align-items: center">
+      <div id="choose_country1" style="font-family: Bahnschrift;"></div>
+      <div id="choose_country2" style="margin-left: 200px; font-family: Bahnschrift;"></div>
+    </div>
+
+    <div id="error_map" style="margin-top: 0px; font-family: Bahnschrift; color: red;"></div>
+  </div>
+
+    <!--III. SMALL MULTIPLES -->
+    <div id="right-container">
+      <p style="text-align: center; font-size: 14px; font-family: Bahnschrift; margin-top: -5px;">
+        Correlation between total deaths and other variables
+      </p>
+      <svg id="sc1_svg"></svg>
+      <svg id="sc2_svg"></svg><br>
+      <svg id="sc3_svg"></svg>
+      <svg id="sc4_svg"></svg><br>
+      <svg id="sc5_svg"></svg>
+      <svg id="sc6_svg"></svg><br>
+      <svg id="sc7_svg"></svg>
+      <svg id="ctext"></svg>
+    </div>
+
+  <script>
+    //I. Map
+    //define properties of the map
+    let map_svg = d3.select("#mapcontainer"); //select and create a variable for the SVG of the map
+    const height_of_map=300
+    const width_of_map=600
+    map_svg.attr("width", width_of_map)
+      .attr("height",height_of_map) //move it to the center
+
+    let selMeas="total_deaths_per_million" //default: show total deaths at 2020-03
+    let selDate='2020-03'
+    let selVacc="people_fully_vaccinated_per_hundred"
+
+    //define some other elements
+    let slider = document.getElementById("timeSlider");
+    let selection = document.getElementById("selection"); 
+    let choosen_country1=document.getElementById("choose_country1");
+    let choosen_country2=document.getElementById("choose_country2");
+    let errorspot=document.getElementById("error_map")
+
+    //define original text below map:
+    const text_original="Choose at most 2 countries on the map to get details!"
+    choosen_country1.textContent=text_original
+
+    //define default value of slider and text:
+    slider.value = 0;
+    selection.textContent = '2020-03'
+
+    //Load data and map vis:
+    Promise.all([
+        d3.csv('./eur_map_all.csv'),
+        d3.json('./europe_geo.json'),
+        d3.csv('./eur_scatterplot_data.csv')
+      ])
+      .then(([rawdata, geodata, scatterdata]) => {
+
+        const allCountryNames = geodata.features.map(feature => feature.properties.name); //saving all names 
+        const projection = d3.geoMercator().scale(300).center([60, 40]);  //creating projection, zooming in and recentering for optimal view
+        const path = d3.geoPath(projection); //creating the path
+
+        //Creating a color scale for deaths:
+        maxdataD=d3.max(rawdata, function(d) { return d['total_deaths_per_million']; })
+
+        var colorScaleD= d3.scaleThreshold() //scale that maps continous variables to discrete groups
+          .domain([185,2365,1575,1995,2515,2645,2760])
+          .range(["#fff7f3", "#fde0dd", "#fcc5c0", "#fa9fb5", "#f768a1", "#dd3497", "#ae017e", "#7a0177"]);
+
+        //Creating a color scale for cases:
+        maxdataM=d3.max(rawdata, function(d) { return d['total_cases_per_million']; })
+
+        var colorScaleM= d3.scaleThreshold() //scale that maps continous variables to discrete groups
+          .domain([3345,61890,77430,115670,280975,321820,348950])
+          .range(["#fff7fb","#ece2f0","#d0d1e6","#a6bddb","#67a9cf","#3690c0","#02818a","#016c59"]);
+
+        //first define original map:
+
+        //filter data to one month:
+        let data = rawdata.filter(d => d["date"] === selDate)
+
+        let map = map_svg.selectAll("path") //create map + bind data
+          .data(geodata.features)
+          .enter()
+          .append("path")
+          .attr("d", path)//Add the projection
+          .attr("id", d => d.properties.name) 
+          .style("stroke", "lightgray")
+          .style("stroke-width", 1)
+
+        map_svg.selectAll("path") //define the filling color by colorScale, default: total deaths
+          .data(data)
+          .attr("fill", d => {return colorScaleD(d['total_deaths_per_million']);}); 
+        
+        //Slider: returns date in correct format and performs update on map
+        slider.oninput = function () {
+          const slider = document.getElementById("timeSlider");
+          const sliderValue = parseInt(slider.value);
+
+          const startDate = new Date('2020-03');
+          const endDate = new Date('2022-12');
+          const dateRange = d3.timeMonth.range(startDate, endDate, 1);
+          const xScale = d3.scaleTime()
+            .domain(d3.extent(dateRange)) //with same range as data
+            .range([0, 30]); //create a scale with same width
+
+          const selectedDate = new Date(startDate);
+          selectedDate.setMonth(selectedDate.getMonth() + sliderValue);
+
+          selDate = d3.timeFormat("%Y-%m")(selectedDate);
+          updateMap()
+
+          selection.textContent = selDate;
+        }
+
+        d3.select('#meas') // select the select element
+          .on('change', function() { //if there is a change, then...
+            selMeas = this.value; // store selected value
+            updateMap() //update the map
+            createScale(selMeas,scaleGroup); //update the colorscale in the bottom
+          });
+
+        //Updates map for selected date and measure:
+        function updateMap() {
+          //filter for given date
+          data = rawdata.filter(d => d["date"] === selDate);
+          map_svg.selectAll("path") //bind data
+          .data(geodata.features)
+          .style("stroke", d => { //the border of the first country: green, seconf country: purple
+            if (clickedStates[0] === d.properties.name) {
+              return "#01FF01";
+            } else if (clickedStates[1]===d.properties.name) {
+              return "#B200FF";
+            } else {
+              return "lightgray";
+            }
+          }) //make the border bolder
+          .style("stroke-width", d => {
+            if (clickedStates.includes(d.properties.name)) {return "3";} 
+            else {return "1"}
+          })
+          map_svg.selectAll("path") //the fill should be still the one from the scale
+          .data(data)
+          .attr("fill", d => {
+              if (selMeas === "total_cases_per_million") {return colorScaleM(d[selMeas]);} 
+              else {return colorScaleD(d[selMeas]);}
+          });
+        }
+
+        //update the details below the table:
+        function updateText(reset) {
+          if (reset==="True") {
+            //if we want to reset:
+            choosen_country1.textContent=text_original
+            choosen_country2.textContent=""
+          } // if not:
+          else {
+            var state1=clickedStates[0]
+            var enddata1=rawdata.filter(d => d.location === state1&& d.date === "2022-12");
+            var scdata1=scatterdata.filter(d => d.location === state1);
+            choosen_country1.innerHTML = "<span style='color: #009200; font-size: 12px'>Country: " + state1 +
+              "<br>Total deaths: " + enddata1[0].total_deaths +
+              "<br>Total deaths per million: " + enddata1[0].total_deaths_per_million +
+              "<br>Total cases: " + enddata1[0].total_cases +
+              "<br>Total cases per million: " + enddata1[0].total_cases_per_million +
+              "<br>Smokers: " + scdata1[0].smokers +
+              "<br>Median Age: " + scdata1[0].median_age +
+              "<br>Aged 70 or Older: " + scdata1[0].aged_70_older +
+              "<br>GDP per Capita: " + scdata1[0].gdp_per_capita + 
+              "<br>Cardiovascular Death Rate: " + scdata1[0].cardiovasc_death_rate + 
+              "<br>Diabetes Prevalence: " + scdata1[0].diabetes_prevalence + 
+              "<br>Life Expectancy: " + scdata1[0].life_expectancy + "</span>";
+
+            //if we have two selected countries also add the second line:
+            if (clickedStates.length>1) {
+              var state2=clickedStates[1]
+              var enddata2=rawdata.filter(d => d.location === state2&& d.date === "2022-12");
+              var scdata2 = scatterdata.filter(d => d.location === state2);
+              choosen_country2.innerHTML = "<span style='color: #57007F; font-size: 12px'>Country: " + state2 +
+                "<br>Total deaths: " + enddata2[0].total_deaths +
+                "<br>Total deaths per million: " + enddata2[0].total_deaths_per_million +
+                "<br>Total cases: " + enddata2[0].total_cases +
+                "<br>Total cases per million: " + enddata2[0].total_cases_per_million +
+                "<br>Smokers: " + scdata2[0].smokers +
+                "<br>Median Age: " + scdata2[0].median_age +
+                "<br>Aged 70 or Older: " + scdata2[0].aged_70_older +
+                "<br>GDP per Capita: " + scdata2[0].gdp_per_capita +
+                "<br>Cardiovascular Death Rate: " + scdata2[0].cardiovasc_death_rate +
+                "<br>Diabetes Prevalence: " + scdata2[0].diabetes_prevalence +
+                "<br>Life Expectancy: " + scdata2[0].life_expectancy;
+            }
+          }
+        }
+        //define click interaction
+        let clickedStates = [];
+        map_svg.selectAll("path")
+        .on("click", function(d) {
+            let state = d.target.id;
+            if (!clickedStates.includes(state)) {
+               if (clickedStates.length < 2) {
+                 clickedStates.push(state);} 
+              else {errorspot.textContent="Maximum number of chosen countries reached! Reset by clicking on white."
+              return;}
+            } 
+            //update everything if countries are selected:
+            updateMap();
+            updateText(reset="False");
+            updateLines()
+            updateLines2()
+            updateScatter(data=scatterdata, big_scp, selVacc)
+            updateScatter(scatterdata, cont1, correlationCoefficients[0]['variable']);
+            updateScatter(scatterdata, cont2, correlationCoefficients[1]['variable']);
+            updateScatter(scatterdata, cont3, correlationCoefficients[2]['variable']);
+            updateScatter(scatterdata, cont4, correlationCoefficients[3]['variable']);
+            updateScatter(scatterdata, cont5, correlationCoefficients[4]['variable']);
+            updateScatter(scatterdata, cont6, correlationCoefficients[5]['variable']);
+            updateScatter(scatterdata, cont7, correlationCoefficients[6]['variable']);
+        });
+
+        //creating interaction if we want to delete:
+        map_svg.on("click", function(event) {
+          if (event.target.nodeName !== "path") {
+            //reset everything
+            clickedStates = [];
+            updateMap();
+            updateText(reset="True")
+            errorspot.textContent=""
+            updateScatter(data=scatterdata, big_scp, selVacc)
+            updateScatter(scatterdata, cont1, correlationCoefficients[0]['variable']);
+            updateScatter(scatterdata, cont2, correlationCoefficients[1]['variable']);
+            updateScatter(scatterdata, cont3, correlationCoefficients[2]['variable']);
+            updateScatter(scatterdata, cont4, correlationCoefficients[3]['variable']);
+            updateScatter(scatterdata, cont5, correlationCoefficients[4]['variable']);
+            updateScatter(scatterdata, cont6, correlationCoefficients[5]['variable']);
+            updateScatter(scatterdata, cont7, correlationCoefficients[6]['variable']);
+            updateLines()
+            updateLines2()
+          }
+        });
+
+        // Creating the scale:
+
+        // Define the scaleGroup variable
+        const scaleGroup = map_svg.append("g").attr("class", "scale-group");
+        
+        //Adding color labels:
+        function createScale(selMeas,scaleGroup) {
+          //Remove existing rectangles and text:
+
+          scaleGroup.selectAll("rect").remove();
+          scaleGroup.selectAll("text").remove();
+          // Determine the color scale based on the selected measurement
+          const colorScale = (selMeas === "total_cases_per_million") ? colorScaleM : colorScaleD;
+
+          // Define the positions and dimensions for the rectangles
+          const rectWidth = 20;
+          const rectHeight = 10;
+          const rectMargin = 5;
+          const rectX = rectMargin;
+          const rectY = height_of_map - (colorScale.range().length * (rectHeight + rectMargin)) - rectMargin;
+
+          // Append rectangles
+          const rects = scaleGroup.selectAll("rect")
+            .data(colorScale.range())
+            .enter()
+            .append("rect")
+            .attr("x", rectX)
+            .attr("y", (d, i) => rectY + i * (rectHeight + rectMargin))
+            .attr("width", rectWidth)
+            .attr("height", rectHeight)
+            .attr("fill", d => d)
+            .attr("stroke", "black");
+
+          // Append text
+          const text = scaleGroup.selectAll("text")
+            .data(colorScale.range())
+            .enter()
+            .append("text")
+            .attr("x", rectX + rectWidth + rectMargin)
+            .attr("y", (d, i) => rectY + i * (rectHeight + rectMargin) + rectHeight / 2)
+            .attr("dy", "0.35em")
+            .text(d => {
+              const extent = colorScale.invertExtent(d);
+              const roundedExtent = extent.map(value => Math.round(value)); // Round to the nearest whole number
+              if (isNaN(roundedExtent[0])) {
+                  return `<${roundedExtent[1]}`;
+                } else if (isNaN(roundedExtent[1])) {
+                  return `>${roundedExtent[0]}`;
+                } else {
+                  return roundedExtent.join(" - ");
+                }
+            });
+
+          // Style the rectangles and text elements
+          rects.style("opacity", 0.8);
+          text.style("font-size", "10px")
+            .style("fill", "black");
+        }
+
+        // Call the createScle function and pass the selMeas and scaleGroup variables
+        createScale(selMeas, scaleGroup);
+
+
+        ///II. Linecharts
+
+        //II.1. create suitable dataformat
+        let lch_svg1 = d3.select("#lch_cont1");
+        let lch_svg2 = d3.select("#lch_cont2");
+        const height_of_lch=150
+        const width_of_lch=420
+        const margin4text=80
+        lch_svg1.attr("width", width_of_lch)
+          .attr("height",height_of_lch)
+        lch_svg2.attr("width", width_of_lch)
+          .attr("height",height_of_lch)
+
+        let linechData = rawdata.map(element => ({
+          name: element.location,
+          date: new Date(element.date), //saving dates formatted as dates
+          value1: +element.new_cases_per_million,
+          value2: +element.total_vaccinations_per_hundred
+        }));
+        dataByCountry = d3.group(linechData, d => d.name);
+
+        //II.2. CREATE 1. LINECHART
+        //creating x axis
+        let dates = linechData.map(d => d.date);
+        let minDate = d3.min(dates); // Get the minimum date value
+        let maxDate = d3.max(dates); // Get the maximum date value
+        let cases=linechData.map(d=>d.value1); //get the GDP values
+        let maxCase=d3.max(cases);
+
+        // Create a scale for the date range
+        let dateScale = d3.scaleTime()
+          .domain([minDate, maxDate]) // Set the input domain of the scale to the date range
+          .range([0, width_of_lch-margin4text]); // Set the output range of the scale
+
+        //Create y scale for new cases
+        let scaleCase = d3.scaleLinear() //create a scale for the axis
+          .domain([0, maxCase])
+          .range([0,height_of_lch-50])
+        let invscaleCase = d3.scaleLinear() //create an inverted scale for the axis
+          .domain([0, maxCase])
+          .range([height_of_lch-50,0])
+
+        let line1 = d3.line() //creating a line function
+          .x(function(d) {
+            return dateScale(d.date);
+          })
+          .y(function(d) {
+            return height_of_lch-scaleCase(d.value1);
+          });
+
+        lch_svg1.selectAll("lines") //using same method that we used before in tutorial
+        .data(dataByCountry)
+        .enter()
+        .append("path")
+        .attr("d", d => line1(d[1])) //setting the position of lines
+        .attr("fill", "none")
+        .attr("stroke", "#FB81EA") //pink color
+        .attr("stroke-width", 2) //setting the stroke-width to be easy to see
+        .attr("transform","translate(80,-50)")
+        .on("mouseover", stateOver)
+        .on("mouseout", stateOut)
+
+        let axisCases = d3.axisLeft()
+        axisCases.scale(invscaleCase) 
+        axisCases.ticks(4); //I used these tick values to make the plot informative but yet as clean as possible
+            
+        lch_svg1.append("g")
+        .call(axisCases)
+        .attr("transform","translate(80,0)")
+        .selectAll("text")
+        .attr("font-family", "Bahnschrift");
+
+        let axisDate=d3.axisBottom()
+        axisDate.scale(dateScale); 
+
+        lch_svg1.append("g") //adding the axis to the svg
+          .attr("class", "axis-date")
+          .call(axisDate)
+          .attr("transform", "translate(80,100)")   
+          .selectAll("text")
+          .attr("font-family", "Bahnschrift");
+
+        lch_svg1.append("text") //adding some texts
+        .attr("x", 210)
+        .attr("y", 130)
+        .attr("font-size", "12px")
+        .text("Date")
+        .attr("font-family", "Bahnschrift"); 
+
+        lch_svg1.append("text")
+        .attr("x", 20)
+        .attr("y", 120)
+        .attr("font-size", "12px")
+        .text("New cases per million")
+        .attr("font-family", "Bahnschrift")
+        .attr("transform", "rotate(-90, 20, 120)");
+
+        //defining the hoover function:
+        function stateOver(event, d) {
+          //get information about line where the mouse hoovers
+          const countryName = d[0];
+          const countryInfo = d[1];
+
+          //get the coordinates where the mouse hovers over the line
+          x_pix=d3.pointer(event)[0]+10
+          y_pix=d3.pointer(event)[1]-70
+
+          if (y_pix<30) {y_pix=30}
+          if (countryName.length  >=10 & x_pix>325) {x_pix=290}
+
+          //remove any existing labels
+          lch_svg1.select("#hoover_tag").remove();
+
+          const index = clickedStates.indexOf(countryName);
+          d3.select(this) // highlight line
+            .attr("stroke", () => {
+                    if (index === 0) {
+                      return "#009200"; // green
+                    } else if (index === 1) {
+                      return "#57007F"; // purple
+                    } else {
+                      return "#C20E79"; // pink
+                    }
+                  })
+                    .raise();
+
+          // Display the label at the specified coordinates:
+          lch_svg1.append("text")
+          .attr("x", x_pix)
+          .attr("y", y_pix)
+          .text(countryName)
+          .attr("font-size", "16px")
+          .attr("fill", () => {
+            if (index === 0) {
+              return "#009200"; //color should be the same
+            } else if (index === 1) {
+              return "#57007F";
+            } else {
+              return "#C20E79";
+            }
+          })
+          .attr("font-family", "Bahnschrift")
+          .attr("id", "hoover_tag");
+        }
+
+        //if the mouse is not on the lines anymore...
+        function stateOut(event, d) { 
+            const countryName = d[0];
+            const index = clickedStates.indexOf(countryName);
+            lch_svg1.select("#hoover_tag").remove(); //remove label
+            d3.select(this) // de-highlight line to appropriate color
+            .attr("stroke", (d) => {
+                if (index === 0 && clickedStates.length > 0) {
+                  return "#01FF01";
+                } else if (index === 1 && clickedStates.length > 1) {
+                  return "#B200FF";
+                } else {
+                  return "#FB81EA";
+                }
+              })
+        }
+
+        function updateLines() {
+            let filteredDataByCountry; //deckare the variable for later
+
+          //filter the data
+          if (clickedStates.length === 0) {
+            filteredDataByCountry = dataByCountry;
+          } else {
+            filteredDataByCountry = new Map(
+              Array.from(dataByCountry)
+              .filter(([key]) => clickedStates.includes(key))
+            );
+          }
+            lch_svg1.selectAll("path").remove(); //remove all lines and ticks
+            lch_svg1.selectAll(".tick").remove();
+
+            lch_svg1.selectAll("lines") //add the filtered lies and ticks with appropriate color
+              .data(filteredDataByCountry)
+              .enter()
+              .append("path")
+              .attr("d", d => line1(d[1]))
+              .attr("fill", "none")
+              .attr("stroke", (d, i) => {
+                if (i === 0 && clickedStates.length > 0) {
+                  return "#01FF01";
+                } else if (i === 1 && clickedStates.length > 1) {
+                  return "#B200FF";
+                } else {
+                  return "#FB81EA";
+                }
+              })
+              .attr("stroke-width", 2)
+              .attr("transform", "translate(80,-50)")
+              .on("mouseover", stateOver)
+              .on("mouseout", stateOut);
+
+            lch_svg1.append("g")
+            .call(axisCases)
+            .attr("transform","translate(80,0)")
+            .selectAll("text")
+            .attr("font-family", "Bahnschrift");
+
+            lch_svg1.append("g") //adding the axis to the svg
+            .call(axisDate)
+            .attr("transform", "translate(80,100)")   
+            .selectAll("text")
+            .attr("font-family", "Bahnschrift");
+        }
+
+        //II.3. CREATE 2. LINECHART
+        //everything is the same except used data and functions have a +"2" in their names for separated control of the svgs
+
+        //creating new y-axis
+        let vacc=linechData.map(d=>d.value2); //get the vaccination information
+        let maxVacc=d3.max(vacc);
+
+        //Create y scale for total vaccinations per hundred
+        let scaleVacc = d3.scaleLinear() //create a scale for the axis
+          .domain([0, maxVacc])
+          .range([0,height_of_lch-50])
+        let invscaleVacc = d3.scaleLinear() //create an inverted scale for the axis
+          .domain([0, maxVacc])
+          .range([height_of_lch-50,0])
+
+        let line2 = d3.line() //creating a line function
+          .x(function(d) {
+            return dateScale(d.date);
+          })
+          .y(function(d) {
+            return height_of_lch-scaleVacc(d.value2);
+          });
+
+        //create linechart
+        lch_svg2.selectAll("lines") 
+        .data(dataByCountry)
+        .enter()
+        .append("path")
+        .attr("d", d => line2(d[1])) 
+        .attr("fill", "none")
+        .attr("stroke", "#FB81EA") 
+        .attr("stroke-width", 2) 
+        .attr("transform","translate(80,-50)")
+        .on("mouseover", stateOver2)
+        .on("mouseout", stateOut2)
+
+        let axisVacc = d3.axisLeft()
+        axisVacc.scale(invscaleVacc) 
+        axisVacc.ticks(4); 
+            
+        lch_svg2.append("g")
+        .call(axisVacc)
+        .attr("transform","translate(80,0)")
+        .selectAll("text")
+        .attr("font-family", "Bahnschrift");
+
+        lch_svg2.append("g") 
+          .call(axisDate)
+          .attr("transform", "translate(80,100)")   
+          .selectAll("text")
+          .attr("font-family", "Bahnschrift");
+
+        lch_svg2.append("text")
+        .attr("x", 210)
+        .attr("y", 130)
+        .attr("font-size", "12px")
+        .text("Date")
+        .attr("font-family", "Bahnschrift"); 
+
+        lch_svg2.append("text")
+        .attr("x", 10)
+        .attr("y", 100)
+        .attr("font-size", "12px")
+        .text("Total vaccinations")
+        .attr("font-family", "Bahnschrift")
+        .attr("transform", "rotate(-90, 10, 100)");
+
+        lch_svg2.append("text")
+        .attr("x", 30)
+        .attr("y", 85)
+        .attr("font-size", "12px")
+        .text("per hundred")
+        .attr("font-family", "Bahnschrift")
+        .attr("transform", "rotate(-90, 30, 85)");
+
+        function stateOver2(event, d) {
+          const countryName = d[0];
+          const countryInfo = d[1];
+
+          // Get the coordinates
+          x_pix = d3.pointer(event)[0] + 10;
+          y_pix = d3.pointer(event)[1] - 70;
+
+          if (y_pix < 30) {
+            y_pix = 30;
+          }
+          if (countryName.length >= 10 && x_pix > 325) {
+            x_pix = 290;
+          }
+
+          // Remove any existing labels
+          lch_svg2.select("#hoover_tag2").remove();
+
+          const index = clickedStates.indexOf(countryName);
+
+          d3.select(this) // highlight line
+            .attr("stroke", () => {
+                    if (index === 0) {
+                      return "#009200"; 
+                    } else if (index === 1) {
+                      return "#57007F"; 
+                    } else {
+                      return "#C20E79"; 
+                    }
+                  })
+                    .raise();
+
+          // Display the label at the specified coordinates
+          lch_svg2.append("text")
+            .attr("x", x_pix)
+            .attr("y", y_pix)
+            .text(countryName)
+            .attr("font-size", "16px")
+            .attr("fill", () => {
+              if (index === 0) {
+                return "#009200"; 
+              } else if (index === 1) {
+                return "#57007F"; 
+              } else {
+                return "#C20E79"; 
+              }
+            })
+            .attr("font-family", "Bahnschrift")
+            .attr("id", "hoover_tag2")
+            .raise(); // Raise the label in front of other elements
+        }
+
+        function stateOut2(event, d) { 
+            const countryName = d[0];
+            const index = clickedStates.indexOf(countryName);
+            lch_svg2.select("#hoover_tag2").remove();
+            d3.select(this) // de-highlight line
+            .attr("stroke", (d) => {
+                if (index === 0 && clickedStates.length > 0) {
+                  return "#01FF01";
+                } else if (index === 1 && clickedStates.length > 1) {
+                  return "#B200FF";
+                } else {
+                  return "#FB81EA";
+                }
+              })
+        }
+
+        function updateLines2() {
+            let filteredDataByCountry; 
+
+          if (clickedStates.length === 0) {
+            filteredDataByCountry = dataByCountry;
+          } else {
+            filteredDataByCountry = new Map(
+              Array.from(dataByCountry)
+              .filter(([key]) => clickedStates.includes(key))
+            );
+          }
+            lch_svg2.selectAll("path").remove();
+            lch_svg2.selectAll(".tick").remove();
+
+            lch_svg2.selectAll("lines") 
+            .data(filteredDataByCountry)
+            .enter()
+            .append("path")
+            .attr("d", d => line2(d[1])) 
+            .attr("fill", "none")
+            .attr("stroke", (d, i) => {
+                if (i === 0 && clickedStates.length > 0) {
+                  return "#01FF01";
+                } else if (i === 1 && clickedStates.length > 1) {
+                  return "#B200FF";
+                } else {
+                  return "#FB81EA";
+                }
+              })
+            .attr("stroke-width", 2) 
+            .attr("transform","translate(80,-50)")
+            .on("mouseover", stateOver2)
+            .on("mouseout", stateOut2)
+
+            lch_svg2.append("g")
+            .call(axisVacc)
+            .attr("transform","translate(80,0)")
+            .selectAll("text")
+            .attr("font-family", "Bahnschrift");
+
+            lch_svg2.append("g") 
+            .call(axisDate)
+            .attr("transform", "translate(80,100)")   
+            .selectAll("text")
+            .attr("font-family", "Bahnschrift");
+        }
+
+        ///III. CREATING SCATTERPLOTS
+
+        //selecting svg-s:
+        let big_scp = d3.select("#big_scplot")
+        let cont1 = d3.select("#sc1_svg"); // Select the container element for the first small multiple
+        let cont2 = d3.select("#sc2_svg"); //...for the second...
+        let cont3 = d3.select("#sc3_svg");
+        let cont4 = d3.select("#sc4_svg");
+        let cont5 = d3.select("#sc5_svg");
+        let cont6 = d3.select("#sc6_svg");
+        let cont7 = d3.select("#sc7_svg");
+        let corrtext = d3.select("#ctext");
+
+        const height_of_sc=296 //define width and hight so that they exactly fit
+        const width_of_sc=width_of_lch
+        const width_of_s_sc=225
+        const height_of_s_sc=167
+
+        const top_margin=5 //define some margins
+        const bottom_margin=45
+        const left_margin=60
+        const right_margin=5
+        
+        big_scp.attr("width", width_of_sc) //set the widths and height
+          .attr("height",height_of_sc)
+        cont1.attr("width", width_of_s_sc)
+          .attr("height",height_of_s_sc)
+        cont2.attr("width", width_of_s_sc)
+          .attr("height",height_of_s_sc)
+        cont3.attr("width", width_of_s_sc)
+          .attr("height",height_of_s_sc)
+        cont4.attr("width", width_of_s_sc)
+          .attr("height",height_of_s_sc)
+        cont5.attr("width", width_of_s_sc)
+          .attr("height",height_of_s_sc)
+        cont6.attr("width", width_of_s_sc)
+          .attr("height",height_of_s_sc)
+        cont7.attr("width", width_of_s_sc)
+          .attr("height",height_of_s_sc)
+        corrtext.attr("width", width_of_s_sc-10) //here we needed it a bit smaller to fit
+          .attr("height",height_of_s_sc-10)  
+
+        //define all variables that are on the x axis of some scatterplot:
+        const variables = ["median_age", "aged_70_older", "gdp_per_capita", "cardiovasc_death_rate", "diabetes_prevalence", "life_expectancy", "smokers", "people_vaccinated_per_hundred", "people_fully_vaccinated_per_hundred"];
+        //define the names that should be displayed:
+        const names_of_variables = ["Median age", "Aged 70 or older", "GDP per capita", "Cardiovasc. death rate", "Diabetes prevalence", "Life expectancy", "Smokers", "People vaccinated per hundred", "People fully vaccinated per hundred" ];
+
+        //calulate correlations:
+        let correlationCoefficients
+        correlationCoefficients = calculatePearsonCorrelation(scatterdata, variables)
+        corr2=calculatePearsonCorrelation2(scatterdata, variables)
+
+        d3.csv('./eur_scatterplot_data.csv').then(function (data) {
+          // Convert the data to numeric values
+            data.forEach(function (d) {
+              d.median_age = +d.median_age;
+              d.aged_70_older = +d.aged_70_older;
+              d.gdp_per_capita = +d.gdp_per_capita;
+              d.cardiovasc_death_rate = +d.cardiovasc_death_rate;
+              d.diabetes_prevalence = +d.diabetes_prevalence;
+              d.life_expectancy = +d.life_expectancy;
+              d.smokers = +d.smokers;
+              d.total_deaths_per_million = +d.total_deaths_per_million;
+              d.people_fully_vaccinated_per_hundred = +d.people_fully_vaccinated_per_hundred;
+              d.people_vaccinated_per_hundred = +d.people_vaccinated_per_hundred;
+            });
+
+            const scatterdata = data;
+            //Calculating correlation coefs. for variables and sorting them based on their abs. value:
+            correlationCoefficients = calculatePearsonCorrelation(scatterdata, variables);
+            //create scatterplots:
+            createScatterplot(scatterdata, big_scp, "people_fully_vaccinated_per_hundred");
+            createScatterplot(scatterdata, cont1, correlationCoefficients[0]['variable']);
+            createScatterplot(scatterdata, cont2, correlationCoefficients[1]['variable']);
+            createScatterplot(scatterdata, cont3, correlationCoefficients[2]['variable']);
+            createScatterplot(scatterdata, cont4, correlationCoefficients[3]['variable']);
+            createScatterplot(scatterdata, cont5, correlationCoefficients[4]['variable']);
+            createScatterplot(scatterdata, cont6, correlationCoefficients[5]['variable']);
+            createScatterplot(scatterdata, cont7, correlationCoefficients[6]['variable']);
+          });
+        
+        function createScatterplot(scatterdata, container, xVariable, color="False") {
+          let width, height;
+          ind=variables.indexOf(xVariable) //get the index of xVar
+
+          //define some properties for small and big scatterplots:
+          if (container === big_scp) {
+            width = width_of_sc;
+            height = height_of_sc;
+            num_x_ticks=8
+            num_y_ticks=8
+            y_place=180
+
+            //if it is the big container, add correlation to the corner
+            if (selVacc==="people_vaccinated_per_hundred") {
+                  text_for_corr="Correlation: " +corr2[0]['correlation']
+                }
+            else {
+                  text_for_corr="Correlation: " +corr2[1]['correlation']
+                }
+            big_scp.select("#text_corr").remove();
+            big_scp.append("text")
+                .attr("x", width-100)
+                .attr("y", 10)
+                .attr("font-size", "12px")
+                .text(text_for_corr)
+                .attr("fill","#C20E79")
+                .attr("font-family", "Bahnschrift")
+                .attr("id","text_corr");
+          } else {
+            width = width_of_s_sc;
+            height = height_of_s_sc;
+            num_x_ticks=5
+            num_y_ticks=5
+            y_place=130
+          }
+
+          //if the variable is age-related, the minimum of the x-axis should be not zero
+          let minval
+          if (xVariable === "life_expectancy") {
+            minval=65
+          }
+          else {
+            if (xVariable === "median_age") {
+              minval=30
+            }
+            else {minval =0} 
+          }
+
+          xScale = d3.scaleLinear()
+            .domain([minval, d3.max(scatterdata, function(d) { return d[xVariable]; })])
+            .range([0, width - (left_margin + right_margin)]);
+
+          yScale = d3.scaleLinear()
+            .domain([0, d3.max(scatterdata, function(d) { return d.total_deaths_per_million; })])
+            .range([height - (bottom_margin + top_margin), 0]);
+
+          // Add x-axis to the scatterplot
+          container.append("g")
+            .attr("transform", "translate(" + left_margin + "," + (height - (bottom_margin + top_margin)) + ")")
+            .call(d3.axisBottom(xScale).ticks(num_x_ticks).tickFormat(d3.format(".0f")))
+            .attr("font-family", "Bahnschrift")
+            .attr("font-size", 10);
+
+          // Add y-axis to the scatterplot
+          container.append("g")
+            .attr("transform", "translate(" + left_margin + ", 0)")
+            .call(d3.axisLeft(yScale).ticks(num_y_ticks).tickFormat(d3.format(".0f")))
+            .attr("font-family", "Bahnschrift")
+            .attr("font-size", 10);
+
+          // Add circles representing the data points
+          container.selectAll("circle")
+            .data(scatterdata)
+            .enter().append("circle")
+            .attr("cx", function(d) { return xScale(d[xVariable]); })
+            .attr("cy", function(d) { return yScale(d.total_deaths_per_million); })
+            .attr("r", 5) 
+            .attr("fill", "#FB81EA")
+            .attr("transform", "translate(" + left_margin + "," + top_margin + ")")
+            .on("mouseover", function(event, d) { stateOver_SC(event, d, container); })
+            .on("mouseout", function(event, d) { stateOut_SC(event, d, container); })
+
+          container.append("text")
+            .attr("x", width/2)
+            .attr("y", height-(bottom_margin+top_margin)+30)
+            .attr("font-size", "12px")
+            .text(names_of_variables[ind])
+            .attr("font-family", "Bahnschrift")
+            .attr("text-anchor", "middle");
+            
+          container.append("text")
+            .attr("x", 20)
+            .attr("y", y_place)
+            .attr("font-size", "12px")
+            .text("Total deaths per million")
+            .attr("font-family", "Bahnschrift")
+            .attr("transform", "rotate(-90, 20, "+ y_place+")");
+        }
+        
+        //define functions to add hoover tags:
+        function stateOver_SC(event, d, container) {
+          const countryName = d['location'];
+
+          // Get the x-coordinate (date) where the mouse hovers over the line
+          var x_pix = d3.pointer(event)[0];
+          var y_pix = d3.pointer(event)[1];
+
+          //if the text would be cut off, move it towards the center
+          if (container===big_scp) {
+            if (y_pix < 20) {
+              y_pix = 20;
+            }
+            if (x_pix < 30) {
+              x_pix = 65;
+            }
+          }
+          else {
+            x_pix=80
+            y_pix=60
+          }
+
+          // Remove any existing labels
+          container.select("#hoover_tag3").remove();
+
+          const index = clickedStates.indexOf(countryName);
+          // Display the label at the specified coordinates
+          container.append("text")
+            .attr("x", x_pix)
+            .attr("y", y_pix)
+            .text(countryName)
+            .attr("font-size", "16px")
+            .attr("fill", () => {
+              if (index === 0) {
+                return "#009200"; // Green
+              } else if (index === 1) {
+                return "#57007F"; // Blue
+              } else {
+                return "#C20E79"; // Pink
+              }
+            })
+            .attr("font-family", "Bahnschrift")
+            .attr("id", "hoover_tag3");
+        }
+
+        //just remove label if not anymore on a cirlce with the mouse:
+          function stateOut_SC(event, d, container) { 
+            container.select("#hoover_tag3").remove();
+          }
+
+          //very similar to create scatter, just use highilghts:
+          function updateScatter(data, container, xVariable) {
+              data.forEach(function (d) {
+                d.median_age = +d.median_age;
+                d.aged_70_older = +d.aged_70_older;
+                d.gdp_per_capita = +d.gdp_per_capita;
+                d.cardiovasc_death_rate = +d.cardiovasc_death_rate;
+                d.diabetes_prevalence = +d.diabetes_prevalence;
+                d.life_expectancy = +d.life_expectancy;
+                d.smokers = +d.smokers;
+                d.total_deaths_per_million = +d.total_deaths_per_million;
+                d.people_fully_vaccinated_per_hundred = +d.people_fully_vaccinated_per_hundred;
+                d.people_vaccinated_per_hundred = +d.people_vaccinated_per_hundred;
+              });
+
+              if (container === big_scp) {
+                width = width_of_sc;
+                height = height_of_sc;
+                num_x_ticks=8
+                num_y_ticks=8
+                y_place=180
+
+                if (selVacc==="people_vaccinated_per_hundred") {
+                  text_for_corr="Correlation: " +corr2[0]['correlation']
+                }
+                else {
+                      text_for_corr="Correlation: " +corr2[1]['correlation']
+                    }
+                big_scp.select("#text_corr").remove();
+                big_scp.append("text")
+                    .attr("x", width-100)
+                    .attr("y", 10)
+                    .attr("font-size", "12px")
+                    .text(text_for_corr)
+                    .attr("fill","#C20E79")
+                    .attr("font-family", "Bahnschrift")
+                    .attr("id","text_corr");
+              } else {
+                width = width_of_s_sc;
+                height = height_of_s_sc;
+                num_x_ticks=5
+                num_y_ticks=5
+                y_place=130
+              }
+              let minval
+              if (xVariable === "life_expectancy") {
+                minval=65
+              }
+              else {
+                if (xVariable === "median_age") {
+                  minval=30
+                }
+                else {minval =0}
+                
+              }
+
+              xScale2 = d3.scaleLinear()
+                .domain([minval, d3.max(scatterdata, function(d) { return d[xVariable]; })])
+                .range([0, width - (left_margin + right_margin)]);
+
+              yScale2 = d3.scaleLinear()
+                .domain([0, d3.max(scatterdata, function(d) { return d.total_deaths_per_million; })])
+                .range([height - (bottom_margin + top_margin), 0]);
+
+              container.selectAll("circle").remove();
+
+              container.selectAll("circle")
+              .data(data)
+              .enter().append("circle")
+              .attr("cx", function (d) { return xScale2(d[xVariable]); })
+              .attr("cy", function (d) { return yScale2(d.total_deaths_per_million); })
+              .attr("r", 5) 
+              .attr("fill", function (d) { //THIS IS THE CHANGE
+                if (clickedStates.includes(d.location)) {
+                  if (clickedStates[0] === d.location) {
+                    return "#01FF01"; // Green for first clicked state
+                  } else if (clickedStates[1] === d.location) {
+                    return "#9400D6"; // Purple for second clicked state
+                  }
+                }
+                return "#FB81EA"; // Default pink color
+              })
+              .attr("transform","translate("+left_margin+"," + top_margin + ")")
+              .on("mouseover", function(event, d) { stateOver_SC(event, d, container); })
+              .on("mouseout", function(event, d) { stateOut_SC(event, d, container); })   
+            container.selectAll("circle")
+              .filter(function (d) {
+                return clickedStates.includes(d.location);
+              }).raise();
+          }
+
+        //interaction:
+        d3.select('#vacc_meas') // select the select element
+          .on('change', function() { //if there is a change, then...
+            selVacc = this.value; // store selected value
+            updateScatter(scatterdata, big_scp, selVacc)
+          });
+
+        //text for 8. svgs: 
+        var textContent = "";
+        for (var i = 0; i < 7; i++) {
+          var correlationVariable = correlationCoefficients[i]['variable'];
+          var correlationValue = correlationCoefficients[i]['correlation'].toFixed(2); // Round to 2 decimal places;
+          var ind=variables.indexOf(correlationVariable)
+          textContent += names_of_variables[ind] +": " + correlationValue + "\n";
+        }
+        // Add title element
+        var title="The Pearson-correlation coef- \nficients with the total number of \n deaths: "
+        corrtext.append("text")
+        .attr("x", 140)
+        .attr("y", 0)
+        .attr("font-size", "12px")
+        .attr("fill", "#C20E79") // Set the color to pink
+        .attr("font-family", "Bahnschrift")
+        .selectAll("tspan")
+        .data(title.split("\n")) 
+        .enter()
+        .append("tspan")
+        .attr("x", 30)
+        .attr("dy", "1.2em") // Set the line height for each line
+        .text(function(d) {
+          return d;
+        });
+
+        //Add the other lines:
+        corrtext.append("text")
+        .attr("x", 140)
+        .attr("y", 50)
+        .attr("font-size", "12px")
+        .attr("fill", "#C20E79") // Set the color to pink
+        .attr("font-family", "Bahnschrift")
+        .selectAll("tspan")
+        .data(textContent.split("\n")) // Split the text content by line breaks
+        .enter()
+        .append("tspan")
+        .attr("x", 30)
+        .attr("dy", "1.2em") // Set the line height for each line
+        .text(function(d) {
+          return d;
+        });
+
+        //Defining a function to get the correlations:
+        function calculatePearsonCorrelation(scatterdata, vars) {
+          const numericalVariables=vars.slice(0,7)
+          console.log(numericalVariables)
+
+          const correlationCoefficients = Array.from(numericalVariables, variable => {
+            const x = scatterdata.map(d => d[variable]);
+            const y = scatterdata.map(d => d.total_deaths_per_million);
+
+            const meanX = d3.mean(x);
+            const meanY = d3.mean(y);
+
+            const deviationX = d3.deviation(x);
+            const deviationY = d3.deviation(y);
+
+            const covariance = d3.mean(x.map((d, i) => (d - meanX) * (y[i] - meanY)));
+            const correlation = covariance / (deviationX * deviationY);
+
+            return { variable, correlation };
+          });
+
+          correlationCoefficients.sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
+
+          return correlationCoefficients;
+        }
+        function calculatePearsonCorrelation2(scatterdata, vars) {
+          const numericalVariables = vars.slice(-2);
+
+          const correlationCoefficients = Array.from(numericalVariables, variable => {
+            const x = scatterdata.map(d => d[variable]);
+            const y = scatterdata.map(d => d.total_deaths_per_million);
+
+            const meanX = d3.mean(x);
+            const meanY = d3.mean(y);
+
+            const deviationX = d3.deviation(x);
+            const deviationY = d3.deviation(y);
+
+            const covariance = d3.mean(x.map((d, i) => (d - meanX) * (y[i] - meanY)));
+            const correlation = covariance / (deviationX * deviationY);
+
+            return { variable, correlation };
+          });
+
+          correlationCoefficients.sort((a, b) => Math.abs(b.correlation) - Math.abs(a.correlation));
+
+          return correlationCoefficients;
+        }
+
+      });
+  </script>
+</body>
