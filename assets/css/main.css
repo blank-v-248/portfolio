@@ -216,8 +216,8 @@ h6 {
 
 .navmenu a:hover,
 .navmenu li:hover>a {
+  max-width: 100%;
   color: var(--contrast-color);
-  background: var(--nav-hover-color);
 }
 
 .navmenu a:hover span,
@@ -678,10 +678,17 @@ section,
 --------------------------*/
 
 .projects {
+  margin-left: 0px;
   display: flex;
   flex-direction: column;
   gap: 20px;
   padding: 20px;
+}
+
+@media (min-width: 1600px) {
+  .projects {
+    margin-left: 160px;
+  }
 }
 
 .project {
